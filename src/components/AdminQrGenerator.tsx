@@ -438,20 +438,20 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
               <label className="admin-field admin-qr-field">
                 <span>هدف QR</span>
                 <div className="admin-qr-option-row">
-                  {/* <label className="admin-qr-radio"><input type="radio" name="target" value="category" checked={target === "category"} onChange={() => setTarget("category")} /> دسته خاص</label> */}
+                  <label className="admin-qr-radio"><input type="radio" name="target" value="category" checked={target === "category"} onChange={() => setTarget("category")} /> دسته خاص</label>
                   <label className="admin-qr-radio"><input type="radio" name="target" value="categories" checked={target === "categories"} onChange={() => setTarget("categories")} /> صفحهٔ دسته‌ها</label>
                   <label className="admin-qr-radio"><input type="radio" name="target" value="business" checked={target === "business"} onChange={() => setTarget("business")} /> صفحهٔ کسب‌وکار</label>
                 </div>
               </label>
 
-              {/* {target === "category" && (
+              {target === "category" && (
                 <label className="admin-field admin-qr-field">
                   <span>دسته</span>
                   <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
                   </select>
                 </label>
-              )} */}
+              )}
 
               {/* <label className="admin-field admin-qr-field">
                 <span>فرمت فایل</span>
