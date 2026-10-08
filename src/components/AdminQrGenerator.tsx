@@ -129,18 +129,18 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
     try {
       // Build absolute target URL depending on selected target
       const base = `${window.location.origin}${window.location.pathname}`;
-      let apiUrl = "";
+      let endpoint = "";
       let useGetCategory = false;
       if (target === "category") {
         // call category endpoint
-        apiUrl = apiUrl(`/api/admin/qrcode/category/${encodeURIComponent(categoryId)}`);
+        endpoint = apiUrl(`/api/admin/qrcode/category/${encodeURIComponent(categoryId)}`);
         useGetCategory = true;
       } else {
-        apiUrl = apiUrl("/api/admin/qrcode");
+        endpoint = apiUrl("/api/admin/qrcode");
       }
 
       if (useGetCategory) {
-        const q = new URL(apiUrl);
+        const q = new URL(endpoint);
         q.searchParams.set("file", fileType);
         q.searchParams.set("size", String(size));
         if (logoUrl) q.searchParams.set("logoUrl", logoUrl);
@@ -177,7 +177,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
         const body: any = { data: fullUrl, size, file: fileType };
         if (logoUrl) body.logoUrl = logoUrl;
         if (!contrastBg) body.noLogoBg = 1;
-        const resp = await fetch(apiUrl, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const resp = await fetch(endpoint, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (!resp.ok) {
           const payload = await resp.json().catch(() => ({}));
           throw new Error(payload?.message || "خطا در تولید QR");
@@ -539,7 +539,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
                 <div className="admin-qr-meta">
                   <button className="admin-button" type="button" onClick={() => { if (generatedBlobUrl) window.open(generatedBlobUrl, "_blank"); }} disabled={!generatedBlobUrl}><Icon name="eye" />مشاهده کامل</button>
                   <button className="admin-button is-secondary" type="button" onClick={handleDownload} disabled={!generatedBlobUrl}><Icon name="download" />دانلود</button>
-                  <button className="admin-button" type="button" onClick={() => setShowModal(true)} disabled={!previewDataUrl && !generatedBlobUrl}><Icon name="settings" />پیش‌نمایش چاپ</button>
+                  {/* <button className="admin-button" type="button" onClick={() => setShowModal(true)} disabled={!previewDataUrl && !generatedBlobUrl}><Icon name="settings" />پیش‌نمایش چاپ</button> */}
                   <small>{formIsDirty ? "پیکربندی تغییر کرده" : "پیکربندی پیش‌فرض"}</small>
                 </div>
               </div>
