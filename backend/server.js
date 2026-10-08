@@ -27,9 +27,76 @@ fs.mkdirSync(uploadsDir, { recursive: true });
 const db = new Database(path.join(dataDir, "menu.db"));
 db.pragma("encoding = 'UTF-8'");
 db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
+db.pragma("synchronous = NORMAL");
 db.pragma("foreign_keys = ON");
 
+// NOTE: Prepared statements are cached for process lifetime.
+// Creating `db.prepare()` per request leaves native Statement objects to GC,
+// and GC finalizer racing Node teardown causes:
+// `RemoveEnvironmentCleanupHook Assertion failed: (env) != nullptr` crash.
+let stmts = null;
+const getStmts = () => {
+  if (!stmts) {
+    stmts = {
+      getAdminUser: db.prepare(
+        "SELECT id, password_hash FROM admin_users WHERE username = ?",
+      ),
+      insertAdminUser: db.prepare(
+        "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
+      ),
+      updateAdminPassword: db.prepare(
+        "UPDATE admin_users SET password_hash = ? WHERE username = ?",
+      ),
+      getAdminSession: db.prepare(
+        "SELECT username, expires_at FROM admin_sessions WHERE token_hash = ?",
+      ),
+      deleteAdminSession: db.prepare(
+        "DELETE FROM admin_sessions WHERE token_hash = ?",
+      ),
+      insertAdminSession: db.prepare(
+        "INSERT INTO admin_sessions (token_hash, username, expires_at) VALUES (?, ?, ?)",
+      ),
+      deleteExpiredSessions: db.prepare(
+        "DELETE FROM admin_sessions WHERE expires_at <= ?",
+      ),
+      getMenuData: db.prepare("SELECT data FROM menu WHERE key = ?"),
+      hasMenuKey: db.prepare(
+        "SELECT 1 AS exists_flag FROM menu WHERE key = ?",
+      ),
+      updateMenu: db.prepare(
+        "UPDATE menu SET data = ?, updated_at = strftime('%s', 'now') WHERE key = ?",
+      ),
+      insertMenu: db.prepare(
+        "INSERT INTO menu (key, data) VALUES (?, ?)",
+      ),
+      getSetting: db.prepare("SELECT value FROM settings WHERE key = ?"),
+      hasSetting: db.prepare(
+        "SELECT 1 AS exists_flag FROM settings WHERE key = ?",
+      ),
+      updateSetting: db.prepare(
+        "UPDATE settings SET value = ?, updated_at = strftime('%s', 'now') WHERE key = ?",
+      ),
+      insertSetting: db.prepare(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+      ),
+      getAdminPasswordHash: db.prepare(
+        "SELECT password_hash FROM admin_users WHERE username = ?",
+      ),
+    };
+  }
+  return stmts;
+};
+
+let dbClosing = false;
 const closeDatabase = () => {
+  if (dbClosing) return;
+  dbClosing = true;
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // Ignore checkpoint errors on shutdown.
+  }
   try {
     db.close();
   } catch {
@@ -110,13 +177,13 @@ db.exec(`
 `);
 
 const ensureAdminUser = () => {
-  const existing = db
-    .prepare("SELECT id, password_hash FROM admin_users WHERE username = ?")
-    .get(ADMIN_USERNAME);
+  const stmts = getStmts();
+  const existing = stmts.getAdminUser.get(ADMIN_USERNAME);
   if (!existing) {
-    db.prepare(
-      "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
-    ).run(ADMIN_USERNAME, bcrypt.hashSync(ADMIN_PASSWORD, 12));
+    stmts.insertAdminUser.run(
+      ADMIN_USERNAME,
+      bcrypt.hashSync(ADMIN_PASSWORD, 12),
+    );
     return;
   }
 
@@ -124,9 +191,10 @@ const ensureAdminUser = () => {
     existing.password_hash !== bcrypt.hashSync(ADMIN_PASSWORD, 12) &&
     !bcrypt.compareSync(ADMIN_PASSWORD, existing.password_hash)
   ) {
-    db.prepare(
-      "UPDATE admin_users SET password_hash = ? WHERE username = ?",
-    ).run(bcrypt.hashSync(ADMIN_PASSWORD, 12), ADMIN_USERNAME);
+    stmts.updateAdminPassword.run(
+      bcrypt.hashSync(ADMIN_PASSWORD, 12),
+      ADMIN_USERNAME,
+    );
   }
 };
 
@@ -837,16 +905,6 @@ const defaultMenuDocument = {
 const app = express();
 app.set("trust proxy", 1);
 
-process.on("SIGINT", () => {
-  closeDatabase();
-  process.exit(0);
-});
-
-process.on("SIGTERM", () => {
-  closeDatabase();
-  process.exit(0);
-});
-
 const parseCookies = (header = "") => {
   const entries = {};
   for (const chunk of header.split(";")) {
@@ -870,16 +928,14 @@ const getAdminTokenFromRequest = (req) => {
 const getAdminSessionFromToken = (token) => {
   if (!token) return null;
   const tokenHash = hashToken(token);
-  const row = db
-    .prepare(
-      "SELECT username, expires_at FROM admin_sessions WHERE token_hash = ?",
-    )
-    .get(tokenHash);
+  const row = getStmts().getAdminSession.get(tokenHash);
   if (!row) return null;
   if (Number(row.expires_at) <= Date.now()) {
-    db.prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(
-      tokenHash,
-    );
+    try {
+      getStmts().deleteAdminSession.run(tokenHash);
+    } catch {
+      // Ignore cleanup errors; session is already treated as expired.
+    }
     return null;
   }
   return { username: row.username, expiresAt: Number(row.expires_at) };
@@ -929,7 +985,7 @@ const containsCorruptedUtf8 = (value) => {
 };
 
 const ensureDefaultMenu = () => {
-  const row = db.prepare("SELECT data FROM menu WHERE key = ?").get("menu");
+  const row = getStmts().getMenuData.get("menu");
   if (!row) {
     writeJson("menu", defaultMenuDocument);
     return defaultMenuDocument;
@@ -949,7 +1005,7 @@ const ensureDefaultMenu = () => {
 };
 
 const readJson = (key, fallbackValue = null) => {
-  const row = db.prepare("SELECT data FROM menu WHERE key = ?").get(key);
+  const row = getStmts().getMenuData.get(key);
   if (!row) return fallbackValue;
   try {
     const parsed = JSON.parse(row.data);
@@ -964,18 +1020,17 @@ const readJson = (key, fallbackValue = null) => {
 
 const writeJson = (key, value) => {
   const json = JSON.stringify(value);
-  const existing = db.prepare("SELECT 1 FROM menu WHERE key = ?").get(key);
+  const stmts = getStmts();
+  const existing = stmts.hasMenuKey.get(key);
   if (existing) {
-    db.prepare(
-      "UPDATE menu SET data = ?, updated_at = strftime('%s', 'now') WHERE key = ?",
-    ).run(json, key);
+    stmts.updateMenu.run(json, key);
   } else {
-    db.prepare("INSERT INTO menu (key, data) VALUES (?, ?)").run(key, json);
+    stmts.insertMenu.run(key, json);
   }
 };
 
 const readSetting = (key, fallbackValue = null) => {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  const row = getStmts().getSetting.get(key);
   if (!row) return fallbackValue;
   try {
     return JSON.parse(row.value);
@@ -986,18 +1041,12 @@ const readSetting = (key, fallbackValue = null) => {
 
 const writeSetting = (key, value) => {
   const serialized = JSON.stringify(value);
-  const existing = db
-    .prepare("SELECT 1 FROM settings WHERE key = ?")
-    .get(key);
+  const stmts = getStmts();
+  const existing = stmts.hasSetting.get(key);
   if (existing) {
-    db.prepare(
-      "UPDATE settings SET value = ?, updated_at = strftime('%s', 'now') WHERE key = ?",
-    ).run(serialized, key);
+    stmts.updateSetting.run(serialized, key);
   } else {
-    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
-      key,
-      serialized,
-    );
+    stmts.insertSetting.run(key, serialized);
   }
 };
 
@@ -1015,9 +1064,7 @@ app.post("/api/admin/login", (req, res) => {
       .json({ ok: false, message: "Username and password required." });
   }
 
-  const row = db
-    .prepare("SELECT password_hash FROM admin_users WHERE username = ?")
-    .get(username);
+  const row = getStmts().getAdminPasswordHash.get(username);
   if (!row || !bcrypt.compareSync(password, row.password_hash)) {
     return res
       .status(401)
@@ -1026,9 +1073,13 @@ app.post("/api/admin/login", (req, res) => {
 
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
-  db.prepare(
-    "INSERT INTO admin_sessions (token_hash, username, expires_at) VALUES (?, ?, ?)",
-  ).run(hashToken(token), username, expiresAt);
+  const stmts = getStmts();
+  try {
+    stmts.deleteExpiredSessions.run(Date.now());
+  } catch {
+    // Ignore session GC errors; login can proceed.
+  }
+  stmts.insertAdminSession.run(hashToken(token), username, expiresAt);
 
   res.cookie(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
@@ -1044,9 +1095,11 @@ app.post("/api/admin/login", (req, res) => {
 app.post("/api/admin/logout", (req, res) => {
   const token = getAdminTokenFromRequest(req);
   if (token) {
-    db.prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(
-      hashToken(token),
-    );
+    try {
+      getStmts().deleteAdminSession.run(hashToken(token));
+    } catch {
+      // Ignore cleanup errors on logout.
+    }
   }
   res.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
   return res.json({ ok: true });
@@ -1480,6 +1533,36 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ ok: false, message: "Internal server error." });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Stage cafe backend running on http://localhost:${PORT}`);
+});
+
+const gracefulShutdown = (signal) => () => {
+  console.log(`Received ${signal}, shutting down gracefully...`);
+  try {
+    server.close(() => {
+      closeDatabase();
+      process.exit(0);
+    });
+    // Force close if connections hang.
+    setTimeout(() => {
+      closeDatabase();
+      process.exit(0);
+    }, 5000).unref();
+  } catch {
+    closeDatabase();
+    process.exit(0);
+  }
+};
+
+process.on("SIGINT", gracefulShutdown("SIGINT"));
+
+process.on("SIGTERM", gracefulShutdown("SIGTERM"));
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
 });
