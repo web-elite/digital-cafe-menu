@@ -31,6 +31,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
   const [size, setSize] = useState<number>(500);
   const [fileType, setFileType] = useState<"png" | "svg">("png");
   const [logoUrl, setLogoUrl] = useState<string | null>(defaultLogoUrl || null);
+  const [logoSize, setLogoSize] = useState<"small" | "medium" | "large">("medium");
   const [contrastBg, setContrastBg] = useState<boolean>(true);
   const [downloadName, setDownloadName] = useState<string>("category-qrcode");
 
@@ -144,6 +145,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
         q.searchParams.set("file", fileType);
         q.searchParams.set("size", String(size));
         if (logoUrl) q.searchParams.set("logoUrl", logoUrl);
+        q.searchParams.set("logoSize", logoSize);
         if (!contrastBg) q.searchParams.set("noLogoBg", "1");
         const resp = await fetch(q.toString(), { credentials: "include" });
         if (!resp.ok) {
@@ -174,7 +176,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
         if (target === "categories") targetHash = "#/categories";
         const fullUrl = `${base}${targetHash}${target === "category" ? encodeURIComponent(categoryId) : ""}`;
         // For category this branch won't be used, but keep safe.
-        const body: any = { data: fullUrl, size, file: fileType };
+        const body: any = { data: fullUrl, size, file: fileType, logoSize };
         if (logoUrl) body.logoUrl = logoUrl;
         if (!contrastBg) body.noLogoBg = 1;
         const resp = await fetch(endpoint, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -397,7 +399,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
     }
   };
 
-  const formIsDirty = useMemo(() => !!logoUrl || size !== 500 || fileType !== "png" || !downloadName || !contrastBg, [logoUrl, size, fileType, downloadName, contrastBg]);
+  const formIsDirty = useMemo(() => !!logoUrl || size !== 500 || fileType !== "png" || !downloadName || !contrastBg || logoSize !== "medium", [logoUrl, size, fileType, downloadName, contrastBg, logoSize]);
 
   return (
     <main className="admin-screen admin-qr-generator">
@@ -501,6 +503,29 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
                 <small>می‌توانید آدرس یک تصویر را وارد کنید یا فایل را آپلود کنید (JPG/PNG/WebP). تصویر به‌صورت خودکار کراپ و تغییر اندازه می‌شود.</small>
               </label>
 
+              <div className="admin-field">
+                <span>سایز لوگو وسط QR</span>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} role="radiogroup" aria-label="سایز لوگو">
+                  {([
+                    { value: "small", label: "کوچک", hint: "۱۵٪" },
+                    { value: "medium", label: "متوسط", hint: "۲۰٪" },
+                    { value: "large", label: "بزرگ", hint: "۲۸٪" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={logoSize === opt.value}
+                      onClick={() => setLogoSize(opt.value)}
+                      className={logoSize === opt.value ? "admin-button" : "admin-button is-secondary"}
+                    >
+                      {opt.label} <small style={{ opacity: 0.75 }}>({opt.hint})</small>
+                    </button>
+                  ))}
+                </div>
+                <small>بزرگ‌تر از ۳۰٪ خوانایی QR را کم می‌کند؛ «متوسط» امن‌ترین است.</small>
+              </div>
+
               <label className="admin-check-field is-full"><input type="checkbox" checked={contrastBg} onChange={() => setContrastBg(!contrastBg)} /><span>اضافه کردن پس‌زمینهٔ سفید پشت لوگو برای خوانایی بهتر (پیشنهادی)</span></label>
 
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -508,7 +533,7 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
                 <button className="admin-button is-secondary" type="button" onClick={() => handleGenerate({ preview: false })} disabled={generating}>{generating ? "در حال تولید..." : "تولید"}</button>
                 <button className="admin-button" type="button" onClick={handleDownload} disabled={!generatedBlobUrl}>دانلود</button>
                 {/* <button className="admin-button" type="button" onClick={() => { if (previewDataUrl || generatedBlobUrl) setShowModal(true); }} disabled={!previewDataUrl && !generatedBlobUrl}>پیش‌نمایش چاپ</button> */}
-                <button className="admin-text-button" type="button" onClick={() => { setLogoUrl(defaultLogoUrl || null); setPreviewDataUrl(null); setGeneratedBlobUrl(null); }}>بازنشانی</button>
+                <button className="admin-text-button" type="button" onClick={() => { setLogoUrl(defaultLogoUrl || null); setLogoSize("medium"); setPreviewDataUrl(null); setGeneratedBlobUrl(null); }}>بازنشانی</button>
               </div>
 
               {notice && <p className="admin-field-error" role="alert" style={{ marginTop: 12 }}>{notice}</p>}

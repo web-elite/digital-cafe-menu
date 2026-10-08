@@ -1164,6 +1164,8 @@ async function generateQrImageResponse({
   size = 300,
   file = "png",
   logoUrl = null,
+  noLogoBg = false,
+  logoSizePct = 20,
 }) {
   if (!data || typeof data !== "string") {
     return res.status(400).json({
@@ -1173,6 +1175,11 @@ async function generateQrImageResponse({
   }
 
   const width = Number(size) || 300;
+  // Logo size as % of QR width. Presets: small=15, medium=20, large=28. Clamp 10–35.
+  const rawPct = /^(small|medium|large)$/i.test(String(logoSizePct ?? ""))
+    ? { small: 15, medium: 20, large: 28 }[String(logoSizePct).toLowerCase()]
+    : Number(logoSizePct);
+  const logoPct = Math.min(35, Math.max(10, Number.isFinite(rawPct) && rawPct > 0 ? rawPct : 20));
 
   try {
     const svgString = await QRCodeLib.toString(String(data), {
@@ -1183,6 +1190,7 @@ async function generateQrImageResponse({
     });
 
     let finalSvg = svgString;
+    let logoComposite = null;
 
     if (logoUrl && typeof logoUrl === "string") {
       const resolveLocalUpload = (u) => {
@@ -1271,15 +1279,30 @@ async function generateQrImageResponse({
       }
 
       if (imageHref) {
-        const logoSize = Math.floor(width * 0.2);
+        const logoSize = Math.floor((width * logoPct) / 100);
         const x = Math.floor((width - logoSize) / 2);
         const y = Math.floor((width - logoSize) / 2);
-        const logoElements = `\n  <rect x="${x}" y="${y}" width="${logoSize}" height="${logoSize}" fill="#ffffff" rx="${Math.floor(logoSize * 0.15)}" />\n  <image href="${imageHref}" x="${x}" y="${y}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid slice" />\n`;
+        const bgRect = noLogoBg
+          ? ""
+          : `\n  <rect x="${x}" y="${y}" width="${logoSize}" height="${logoSize}" fill="#ffffff" rx="${Math.floor(logoSize * 0.15)}" />\n`;
+        // NOTE: sharp/librsvg needs xlink:href — plain `href` alone is dropped in PNG raster.
+        const logoElements = `${bgRect}  <image xlink:href="${imageHref}" href="${imageHref}" x="${x}" y="${y}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid slice" />\n`;
 
-        finalSvg = svgString.replace(
+        let namespacedSvg = svgString;
+        if (!/xmlns:xlink/.test(namespacedSvg)) {
+          namespacedSvg = namespacedSvg.replace(
+            /<svg\b([^>]*)>/i,
+            `<svg$1 xmlns:xlink="http://www.w3.org/1999/xlink">`,
+          );
+        }
+        finalSvg = namespacedSvg.replace(
           /<\/svg>\s*$/i,
           `${logoElements}</svg>`,
         );
+
+        // Keep raw logo bytes for the PNG path — librsvg sometimes drops
+        // <image> even with xlink, so PNG is composited with sharp below.
+        logoComposite = { buffer: logoBuffer, x, y, logoSize };
       }
     }
 
@@ -1288,7 +1311,35 @@ async function generateQrImageResponse({
       return res.send(finalSvg);
     }
 
-    const pngBuffer = await sharp(Buffer.from(finalSvg)).png().toBuffer();
+    const composite = logoComposite;
+    let pngBuffer;
+    if (composite && composite.buffer) {
+      const basePng = await sharp(Buffer.from(svgString)).resize(width, width).png().toBuffer();
+      const { x, y, logoSize } = composite;
+      try {
+        const overlays = [];
+        if (!noLogoBg) {
+          const radius = Math.floor(logoSize * 0.15);
+          const bgSvg = `<svg width="${logoSize}" height="${logoSize}" xmlns="http://www.w3.org/2000/svg"><rect width="${logoSize}" height="${logoSize}" rx="${radius}" ry="${radius}" fill="#ffffff"/></svg>`;
+          overlays.push({
+            input: await sharp(Buffer.from(bgSvg)).png().toBuffer(),
+            left: x,
+            top: y,
+          });
+        }
+        overlays.push({
+          input: await sharp(composite.buffer).resize(logoSize, logoSize, { fit: "cover" }).png().toBuffer(),
+          left: x,
+          top: y,
+        });
+        pngBuffer = await sharp(basePng).composite(overlays).png().toBuffer();
+      } catch (e) {
+        console.error("Failed to composite logo onto QR PNG, falling back to SVG raster:", e);
+        pngBuffer = await sharp(Buffer.from(finalSvg)).resize(width, width).png().toBuffer();
+      }
+    } else {
+      pngBuffer = await sharp(Buffer.from(finalSvg)).resize(width, width).png().toBuffer();
+    }
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Content-Length", pngBuffer.length);
     return res.send(pngBuffer);
@@ -1319,10 +1370,13 @@ app.get(
     const hashPath = `#/category/${encodeURIComponent(categoryId)}`;
     const targetUrl = `${base.replace(/\/$/, "")}/${hashPath}`;
 
+    const queryLogo = getFirstQueryValue(req.query.logoUrl ?? req.query.logo ?? "").trim();
     const logoOverride = readSetting(`qr-logo:${categoryId}`, null);
     const menu = ensureDefaultMenu();
     const businessLogo = resolveBusinessQrLogo(menu);
-    const logoUrl = logoOverride || businessLogo || null;
+    const logoUrl = queryLogo || logoOverride || businessLogo || null;
+    const noLogoBg = String(getFirstQueryValue(req.query.noLogoBg ?? "") || "").trim() === "1";
+    const logoSize = getFirstQueryValue(req.query.logoSize ?? req.query.logoSizePct ?? "") || "medium";
 
     return generateQrImageResponse({
       data: String(targetUrl),
@@ -1330,6 +1384,8 @@ app.get(
       size: Number(req.query.size || 300),
       file: String(req.query.file || "png"),
       logoUrl,
+      noLogoBg,
+      logoSizePct: logoSize,
     });
   },
 );
@@ -1350,6 +1406,8 @@ app.post("/api/admin/qrcode/category/:categoryId", requireAdmin, async (req, res
   const menu = ensureDefaultMenu();
   const businessLogo = resolveBusinessQrLogo(menu);
   const logoUrl = req.body?.logoUrl || logoOverride || businessLogo || null;
+  const noLogoBg = String(req.body?.noLogoBg ?? "") === "1" || req.body?.noLogoBg === 1 || req.body?.noLogoBg === true;
+  const logoSize = req.body?.logoSize ?? req.body?.logoSizePct ?? "medium";
 
   return generateQrImageResponse({
     data: String(targetUrl),
@@ -1357,6 +1415,8 @@ app.post("/api/admin/qrcode/category/:categoryId", requireAdmin, async (req, res
     size: req.body?.size ?? 300,
     file: req.body?.file ?? "png",
     logoUrl,
+    noLogoBg,
+    logoSizePct: logoSize,
   });
 });
 
@@ -1365,7 +1425,9 @@ app.post("/api/admin/qrcode/category/:categoryId", requireAdmin, async (req, res
 app.get("/api/admin/qrcode", requireAdmin, async (req, res) => {
   const rawData = getFirstQueryValue(req.query.data ?? req.query.url ?? req.query.text);
   const value = rawData || "";
-  const logoUrl = getFirstQueryValue(req.query.logoUrl ?? req.query.logo ?? "") || null;
+  const logoUrl = getFirstQueryValue(req.query.logoUrl ?? req.query.logo ?? "") || resolveBusinessQrLogo(ensureDefaultMenu());
+  const noLogoBg = String(getFirstQueryValue(req.query.noLogoBg ?? "") || "").trim() === "1";
+  const logoSize = getFirstQueryValue(req.query.logoSize ?? req.query.logoSizePct ?? "") || "medium";
 
   if (!logoUrl) {
     const menu = ensureDefaultMenu();
@@ -1376,6 +1438,8 @@ app.get("/api/admin/qrcode", requireAdmin, async (req, res) => {
       size: Number(getFirstQueryValue(req.query.size || "300")) || 300,
       file: String(getFirstQueryValue(req.query.file || "png") || "png"),
       logoUrl: businessLogo,
+      noLogoBg,
+      logoSizePct: logoSize,
     });
   }
 
@@ -1385,11 +1449,13 @@ app.get("/api/admin/qrcode", requireAdmin, async (req, res) => {
     size: Number(getFirstQueryValue(req.query.size || "300")) || 300,
     file: String(getFirstQueryValue(req.query.file || "png") || "png"),
     logoUrl,
+    noLogoBg,
+    logoSizePct: logoSize,
   });
 });
 
 app.post("/api/admin/qrcode", requireAdmin, async (req, res) => {
-  const { data, size = 300, file = "png", logoUrl } = req.body || {};
+  const { data, size = 300, file = "png", logoUrl, noLogoBg, logoSize, logoSizePct } = req.body || {};
   const resolvedLogoUrl =
     typeof logoUrl === "string" && logoUrl.trim()
       ? logoUrl.trim()
@@ -1404,6 +1470,8 @@ app.post("/api/admin/qrcode", requireAdmin, async (req, res) => {
     size,
     file,
     logoUrl: resolvedLogoUrl,
+    noLogoBg: String(noLogoBg ?? "") === "1" || noLogoBg === 1 || noLogoBg === true,
+    logoSizePct: logoSize ?? logoSizePct ?? "medium",
   });
 });
 
