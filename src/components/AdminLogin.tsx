@@ -77,7 +77,7 @@ export default function AdminLogin({ businessName, logo = "", onLogin, onBack }:
                 autoFocus
                 required
                 maxLength={100}
-                placeholder="Username"
+                placeholder="نام کاربری"
                 aria-invalid={Boolean(error)}
                 aria-describedby={error ? errorId : undefined}
                 onChange={(event) => { setUsername(event.target.value); setError(""); }}
@@ -100,7 +100,7 @@ export default function AdminLogin({ businessName, logo = "", onLogin, onBack }:
                   spellCheck={false}
                   required
                   maxLength={200}
-                  placeholder="Password"
+                  placeholder="رمز عبور"
                   aria-invalid={Boolean(error)}
                   aria-describedby={error ? errorId : undefined}
                   onChange={(event) => { setPassword(event.target.value); setError(""); }}

@@ -485,7 +485,10 @@ export default function AdminQrGenerator({ defaultLogoUrl = null }: { defaultLog
                 <span>لوگو (اختیاری)</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input type="text" dir="ltr" value={logoUrl ?? ""} onChange={(e) => setLogoUrl(e.target.value || null)} placeholder="آدرس لوگو یا پس از آپلود URL" style={{ flex: 1 }} />
-                  <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); }} />
+                  <label className="admin-text-button" style={{ display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+                    <span>انتخاب فایل</span>
+                    <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); }} style={{ display: "none" }} />
+                  </label>
                 </div>
                 {uploadProgress !== null && (
                   <div style={{ marginTop: 8 }}>
