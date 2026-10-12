@@ -1,13 +1,15 @@
 export type ParsedRoute =
   | { screen: "profile"; openSheet: boolean }
   | { screen: "menu"; categoryId?: string }
-  | { screen: "admin" };
+  | { screen: "admin" }
+  | { screen: "login" };
 
 export const routeLinks = {
   home: () => "#/",
   categories: () => "#/categories",
   menu: () => "#/menu",
   category: (categoryId: string) => `#/category/${encodeURIComponent(categoryId)}`,
+  login: () => "#/login",
   admin: () => "#/admin",
   adminQr: () => "#/admin/qrcode",
 };
@@ -33,6 +35,12 @@ export function getAbsoluteUrl(hashPath: string): string {
   return `${base}${hashPath}`;
 }
 
+export function isLoginRoute(hash: string, pathname = ""): boolean {
+  const clean = normalizeRoutePath(hash);
+  return Boolean(clean && /^login\/?$/i.test(clean))
+    || (!hash && /^\/login\/?$/i.test(pathname));
+}
+
 export function parseCurrentRoute(hash: string, pathname: string): ParsedRoute {
   if (!hash && /\/admin(?:\/qrcode)?\/?$/i.test(pathname)) {
     return { screen: "admin" };
@@ -45,6 +53,10 @@ export function parseCurrentRoute(hash: string, pathname: string): ParsedRoute {
 
   if (/^categories\/?$/i.test(clean) || /^menu\/categories\/?$/i.test(clean)) {
     return { screen: "profile", openSheet: true };
+  }
+
+  if (isLoginRoute(hash, pathname)) {
+    return { screen: "login" };
   }
 
   if (isAdminRoute(hash, pathname)) {

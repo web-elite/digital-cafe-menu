@@ -222,7 +222,7 @@ const defaultMenuData: MenuData = {
   })),
 };
 
-type Screen = "profile" | "menu" | "admin";
+type Screen = "profile" | "menu" | "admin" | "login";
 
 function StageLogo({ small = false, src = "" }: { small?: boolean; src?: string }) {
   return (
@@ -296,7 +296,12 @@ export default function App() {
 
   const syncRoute = () => {
     const route = parseCurrentRoute(window.location.hash, window.location.pathname);
-    if (route.screen === "admin") {
+    if (route.screen === "login") {
+      setScreen("login");
+      setMenuSheetOpen(false);
+      setDrawerOpen(false);
+      setCartOpen(false);
+    } else if (route.screen === "admin") {
       setScreen("admin");
       setMenuSheetOpen(false);
       setDrawerOpen(false);
@@ -387,6 +392,14 @@ export default function App() {
       document.removeEventListener("visibilitychange", checkSession);
     };
   }, [adminSession, screen]);
+
+  useEffect(() => {
+    if (screen === "admin" && !hasAdminAccess) {
+      navigateTo(routeLinks.login());
+    } else if (screen === "login" && hasAdminAccess) {
+      navigateTo(routeLinks.admin());
+    }
+  }, [screen, hasAdminAccess]);
 
   useEffect(() => {
     document.title = `کافه ${business.name} | ${business.englishName}`;
@@ -515,7 +528,7 @@ export default function App() {
   const logoutAdmin = () => {
     clearAdminSession();
     setAdminSession(null);
-    navigateTo(routeLinks.admin());
+    navigateTo(routeLinks.login());
     setToast("از حساب مدیریت خارج شدید.");
     window.scrollTo({ top: 0, behavior: "instant" });
   };
@@ -568,6 +581,8 @@ export default function App() {
         ) : (
           <AdminLogin businessName={business.name} logo={business.logo} onLogin={loginAdmin} onBack={exitAdmin} />
         )
+      ) : screen === "login" ? (
+        <AdminLogin businessName={business.name} logo={business.logo} onLogin={loginAdmin} onBack={exitAdmin} />
       ) : screen === "profile" ? (
         <main className="profile-screen">
           <div className="profile-background" style={{ backgroundImage: `url("${business.heroImage || photo.hero}")` }} />

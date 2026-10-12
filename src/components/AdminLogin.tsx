@@ -36,7 +36,7 @@ export default function AdminLogin({ businessName, logo = "", onLogin, onBack }:
   return (
     <main className="admin-screen admin-login-screen">
       <header className="admin-login-topbar">
-        <a href={routeLinks.admin()} className="admin-brand" style={{ textDecoration: "none", color: "inherit" }}>
+        <a href={routeLinks.login()} className="admin-brand" style={{ textDecoration: "none", color: "inherit" }}>
           <span className="admin-brand-mark">{logo ? <img src={logo} alt="" /> : "S"}</span>
           <div><strong>کافه {businessName}</strong><small>STAGE · ADMIN ACCESS</small></div>
         </a>
