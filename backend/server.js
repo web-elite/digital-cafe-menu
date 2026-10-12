@@ -956,7 +956,10 @@ const requireAdmin = (req, res, next) => {
 };
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || "https://sahne.menubeen.ir",
+  credentials: true,
+}));
 app.use(express.json({ limit: "12mb" }));
 app.use(rateLimit({ windowMs: 60_000, max: 300 }));
 app.use("/uploads", express.static(uploadsDir));
