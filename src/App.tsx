@@ -343,7 +343,17 @@ export default function App() {
       .then((response) => response.ok ? response.json() : null)
       .then((payload) => {
         if (!payload || !payload.data) return;
-        try { setMenuData(validateMenuData(payload.data)); } catch { /* Ignore invalid backend data, keep the current local menu. */ }
+        // Apply backend data only when it is newer than the local copy
+        const backendData = payload.data as MenuData;
+        const backendSavedAt = backendData.savedAt ?? 0;
+        let localSavedAt = 0;
+        try {
+          const stored = localStorage.getItem(MENU_STORAGE_KEY);
+          if (stored) localSavedAt = (JSON.parse(stored) as MenuData).savedAt ?? 0;
+        } catch { /* localStorage unavailable, always apply backend data */ }
+        if (backendSavedAt && backendSavedAt > localSavedAt) {
+          try { setMenuData(validateMenuData(backendData)); } catch { /* keep current local menu */ }
+        }
       })
       .catch(() => undefined);
 
@@ -394,7 +404,7 @@ export default function App() {
   }, [adminSession, screen]);
 
   useEffect(() => {
-    if (screen === "admin" && !hasAdminAccess) {
+    if (screen === "admin" && !hasAdminAccess && !isAdminSessionValid(readAdminSession())) {
       navigateTo(routeLinks.login());
     } else if (screen === "login" && hasAdminAccess) {
       navigateTo(routeLinks.admin());
@@ -518,9 +528,10 @@ export default function App() {
   const loginAdmin = async (username: string, password: string) => {
     const session = await authenticateAdmin(username, password);
     if (!session) return false;
+    // Navigate first to prevent the [screen, hasAdminAccess] useEffect from redirecting back to login
+    window.location.hash = routeLinks.admin();
     setAdminSession(session);
     setScreen("admin");
-    navigateTo(routeLinks.admin());
     window.scrollTo({ top: 0, behavior: "instant" });
     return true;
   };
@@ -541,13 +552,14 @@ export default function App() {
       return false;
     }
     try {
-      localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(next));
-      setMenuData(next);
+      const stamped = { ...next, savedAt: Date.now() };
+      localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(stamped));
+      setMenuData(stamped);
       fetch(apiUrl("/api/menu"), {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
+        body: JSON.stringify(stamped),
       }).then(async (response) => {
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));

@@ -60,7 +60,7 @@ const getStmts = () => {
       deleteExpiredSessions: db.prepare(
         "DELETE FROM admin_sessions WHERE expires_at <= ?",
       ),
-      getMenuData: db.prepare("SELECT data FROM menu WHERE key = ?"),
+      getMenuData: db.prepare("SELECT data, updated_at FROM menu WHERE key = ?"),
       hasMenuKey: db.prepare(
         "SELECT 1 AS exists_flag FROM menu WHERE key = ?",
       ),
@@ -1133,7 +1133,19 @@ app.post("/api/upload", requireAdmin, upload.single("image"), (req, res) => {
 });
 
 app.get("/api/menu", (_, res) => {
-  res.json({ ok: true, data: ensureDefaultMenu() });
+  const row = getStmts().getMenuData.get("menu");
+  let data;
+  if (row) {
+    try { data = JSON.parse(row.data); } catch { data = null; }
+  }
+  if (!data || containsCorruptedUtf8(data)) {
+    data = ensureDefaultMenu();
+  }
+  // Attach the DB row's updated_at as savedAt so the client can compare freshness
+  if (row && row.updated_at) {
+    data.savedAt = row.updated_at * 1000; // seconds → ms
+  }
+  res.json({ ok: true, data });
 });
 
 app.put("/api/menu", requireAdmin, (req, res) => {

@@ -46,6 +46,7 @@ export type ThemeSettings = {
 
 export type MenuData = {
   version: 1;
+  savedAt?: number;
   categories: Category[];
   business: BusinessInfo;
   theme: ThemeSettings;
@@ -131,6 +132,7 @@ export function validateMenuData(value: unknown): MenuData {
   const normalized = cloneMenuData(value as unknown as MenuData);
   if (normalized.business.logo === undefined) normalized.business.logo = "";
   normalized.theme = { ...DEFAULT_THEME, ...(isRecord(normalized.theme) ? normalized.theme : {}) } as ThemeSettings;
+  if (typeof normalized.savedAt !== "number" || !Number.isFinite(normalized.savedAt)) delete (normalized as unknown as Record<string, unknown>).savedAt;
   return normalized;
 }
 
