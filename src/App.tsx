@@ -246,6 +246,7 @@ export default function App() {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(readAdminSession);
   const initialRoute = useMemo(() => parseCurrentRoute(window.location.hash, window.location.pathname), []);
   const [screen, setScreen] = useState<Screen>(initialRoute.screen);
+  const [adminAuthBusy, setAdminAuthBusy] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState(() => {
     if (initialRoute.screen === "menu" && initialRoute.categoryId) {
       return initialRoute.categoryId;
@@ -272,7 +273,8 @@ export default function App() {
     "--brand-text": menuData.theme.text,
     "--brand-text-soft": menuData.theme.textSoft,
   }) as CSSProperties, [menuData.theme]);
-  const mapUrl = "https://neshan.org/maps/search/" + encodeURIComponent(business.address);
+  //const mapUrl = "https://neshan.org/maps/search/" + encodeURIComponent(business.address);
+  const mapUrl = "https://nshn.ir/ae_b1T9UVJB8BH";
   const visibleCategories = useMemo(() => menuData.categories.filter((category) => category.visible), [menuData]);
   const selectedCategory = visibleCategories.find((category) => category.id === selectedCategoryId) ?? visibleCategories[0];
   const catalog = useMemo(() => menuData.categories.flatMap((category) => category.items.map((item) => ({ ...item, categoryId: category.id, categoryTitle: category.title, categoryVisible: category.visible }))), [menuData]);
@@ -384,7 +386,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!adminSession) return;
+    if (!adminSession || adminAuthBusy) return;
     const checkSession = () => {
       if (isAdminSessionValid(adminSession)) return;
       clearAdminSession();
@@ -401,15 +403,25 @@ export default function App() {
       window.removeEventListener("pageshow", checkSession);
       document.removeEventListener("visibilitychange", checkSession);
     };
-  }, [adminSession, screen]);
+  }, [adminAuthBusy, adminSession, screen]);
 
   useEffect(() => {
-    if (screen === "admin" && !hasAdminAccess && !isAdminSessionValid(readAdminSession())) {
+    if (adminAuthBusy) return;
+    if (screen === "admin" && !hasAdminAccess) {
+      const storedAdminSession = readAdminSession();
+      if (isAdminSessionValid(storedAdminSession)) {
+        setAdminSession(storedAdminSession);
+        return;
+      }
       navigateTo(routeLinks.login());
-    } else if (screen === "login" && hasAdminAccess) {
-      navigateTo(routeLinks.admin());
+    } else if (screen === "login") {
+      const storedAdminSession = readAdminSession();
+      if (hasAdminAccess || isAdminSessionValid(storedAdminSession)) {
+        if (isAdminSessionValid(storedAdminSession)) setAdminSession(storedAdminSession);
+        navigateTo(routeLinks.admin());
+      }
     }
-  }, [screen, hasAdminAccess]);
+  }, [adminAuthBusy, screen, hasAdminAccess]);
 
   useEffect(() => {
     document.title = `کافه ${business.name} | ${business.englishName}`;
@@ -526,14 +538,18 @@ export default function App() {
   };
 
   const loginAdmin = async (username: string, password: string) => {
-    const session = await authenticateAdmin(username, password);
-    if (!session) return false;
-    // Navigate first to prevent the [screen, hasAdminAccess] useEffect from redirecting back to login
-    window.location.hash = routeLinks.admin();
-    setAdminSession(session);
-    setScreen("admin");
-    window.scrollTo({ top: 0, behavior: "instant" });
-    return true;
+    setAdminAuthBusy(true);
+    try {
+      const session = await authenticateAdmin(username, password);
+      if (!session) return false;
+      setAdminSession(session);
+      setScreen("admin");
+      navigateTo(routeLinks.admin());
+      window.scrollTo({ top: 0, behavior: "instant" });
+      return true;
+    } finally {
+      setAdminAuthBusy(false);
+    }
   };
 
   const logoutAdmin = () => {

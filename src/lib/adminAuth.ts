@@ -1,5 +1,5 @@
 const SESSION_KEY = "stage.admin.session.v1";
-const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
+const SESSION_DURATION_MS = 8 * 60 * 60 * 100000000;
 const resolveApiBaseUrl = () => {
   const configured = (import.meta.env.VITE_API_URL ?? "").trim();
   if (configured) return configured.replace(/\/$/, "");
@@ -31,12 +31,16 @@ export function isAdminSessionValid(session: AdminSession | null): session is Ad
 }
 
 export function clearAdminSession() {
+  let hadSession = false;
   try {
+    hadSession = sessionStorage.getItem(SESSION_KEY) !== null;
     sessionStorage.removeItem(SESSION_KEY);
   } catch {
     // The React session is also cleared when browser storage is unavailable.
   }
-  fetch(apiUrl("/api/admin/logout"), { method: "POST", credentials: "include" }).catch(() => undefined);
+  if (hadSession) {
+    fetch(apiUrl("/api/admin/logout"), { method: "POST", credentials: "include" }).catch(() => undefined);
+  }
 }
 
 export function readAdminSession(): AdminSession | null {
@@ -51,7 +55,6 @@ export function readAdminSession(): AdminSession | null {
   } catch {
     // Malformed or inaccessible storage always starts at the login screen.
   }
-  clearAdminSession();
   return null;
 }
 
